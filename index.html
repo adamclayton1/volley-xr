@@ -1024,17 +1024,17 @@ const volley = {
     let src, T, spin = V(), name, bounceAt = null;
     switch (type){
       case 'whip': {          // whipped cross off the wing, bending in or away
-        src = V(s*rand(9,13), 0, rand(-9.5,-6)); T = rand(0.85,1.1);
+        src = V(s*rand(9,13), 0, rand(-9.5,-6)); T = rand(1.05,1.3);
         const wy = rand(30,55)*(Math.random()<0.5?1:-1); spin.set(0, wy, 0);
         name = `Whipped ${wy*s < 0 ? 'inswinger' : 'outswinger'} from the ${sideName}`; break; }
       case 'driven':          // fast and flat
-        src = V(s*rand(8,12), 0, rand(-8,-4)); T = rand(0.6,0.78); P.y = rand(0.25,0.6); spin.set(0, rand(-15,15), 0);
+        src = V(s*rand(8,12), 0, rand(-8,-4)); T = rand(0.85,1.0); P.y = rand(0.25,0.6); spin.set(0, rand(-15,15), 0);
         name = `Driven cross from the ${sideName}`; break;
       case 'lofted':          // big hanging ball from deep, dropping steeply
         src = V(s*rand(10,14), 0, rand(-2,3)); T = rand(1.6,1.95); P.y = rand(0.4,0.95);
         name = `High ball from deep on the ${sideName}`; break;
       case 'cutback':         // pulled back from the byline, skimming low
-        src = V(s*rand(5,8.5), 0, rand(-10.5,-9.3)); T = rand(0.55,0.72); P.y = rand(0.13,0.25);
+        src = V(s*rand(5,8.5), 0, rand(-10.5,-9.3)); T = rand(0.85,1.0); P.y = rand(0.13,0.25);
         name = `Low cut-back from the ${sideName}`; break;
       case 'layoff':          // team-mate in front chips it up for you
         src = V(rand(-1.6,1.6), 0, rand(-3.6,-2.8)); T = rand(0.95,1.25); P.y = rand(0.35,0.85);
@@ -1057,12 +1057,15 @@ const volley = {
     const Sp = src.clone().setY(0.2).addScaledVector(toP, 0.35);
     // backspin on chips and lofted balls (makes them hang), sidespin as set above
     if (type==='layoff' || type==='lofted'){ const vd = P.clone().sub(Sp).setY(0).normalize(); spin.copy(V().crossVectors(vd, UP).multiplyScalar(rand(12,25))); }
-    let v; if (this.preset){ Sp.copy(this.preset.Sp); v = this.preset.v; this.preset = null; } else v = solveLaunch(Sp, P, T, spin);
+    let v; if (this.preset){ Sp.copy(this.preset.Sp); v = this.preset.v; this.preset = null; } else {
+      v = solveLaunch(Sp, P, T, spin);
+      while (v.length() > 15.5 && T < 2.2){ T += 0.08; v = solveLaunch(Sp, P, T, spin); }   // keep it playable: nothing quicker than ~56 km/h
+    }
     // announce it first: the passer calls and waves, a light beam marks him, an arrow points if he's out of view
     const where = Math.abs(src.x) < 2.5 && src.z < -1 ? 'IN FRONT' : (src.x < 0 ? 'your LEFT' : 'your RIGHT');
     this.pending = {Sp, v, spin, P, type, bounce: !!bounceAt, name, where};
     this.P = P;   // defenders and keeper start setting up against where you'll strike it
-    this.phase = 'cue'; this.t = 1.0;
+    this.phase = 'cue'; this.t = 1.5;
     this.cueSpot.position.set(src.x, 0, src.z); this.cueSpot.visible = true;
     sfx.call(toWorld(V(src.x, 1.7, src.z)));
     this.msg = `Ball from ${where} · ${name}`; this.msgColor = '#8fc9ff';
