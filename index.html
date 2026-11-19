@@ -803,9 +803,10 @@ function seg2(a,b,c,d){ // segments ab, cd intersect (x,z)
 
 /* ================= opponents: low-poly players whose bodies are real colliders ================= */
 const KEEPER = [
-  {name:'Easy',   react:0.28, dive:0.70, push:0.6, err:0.32, defenders:2},
-  {name:'Normal', react:0.20, dive:0.58, push:0.75, err:0.18, defenders:3},
-  {name:'Hard',   react:0.16, dive:0.50, push:0.9, err:0.08, defenders:4},
+  // react: seconds before he moves · dive: time to full stretch · push: sideways spring (m) · err: misread (m) · off: how far off his line he comes
+  {name:'Easy',   react:0.26, dive:0.64, push:0.70, err:0.28, off:0.5, replan:0.0,  defenders:2, defReact:0.24, defSpeed:1.6, defReach:0.9},
+  {name:'Normal', react:0.19, dive:0.55, push:0.90, err:0.15, off:0.8, replan:0.2,  defenders:3, defReact:0.19, defSpeed:2.2, defReach:1.1},
+  {name:'Hard',   react:0.17, dive:0.54, push:0.95, err:0.10, off:0.9, replan:0.25, defenders:4, defReact:0.15, defSpeed:2.8, defReach:1.3},
 ];
 const SKIN = 0xd9a982;
 let bodies = [];                       // world-space capsules the ball collides with
@@ -836,7 +837,8 @@ function poseFigure(fig, dt){
   const {P, pose, kit} = fig, c = pose.crouch, a = pose.arm, dy = -c*0.15;
   const pts = {};
   for (const [s,sx] of [['L',-1],['R',1]]){
-    const foot = V(sx*0.14, 0.06, 0.03), knee = V(sx*0.13, 0.48-c*0.08, 0.06+c*0.1), hip = V(sx*0.1, 0.9+dy, 0);
+    const out = (pose.legSide === sx) ? (pose.legOut||0) : 0;          // sliding / stretching leg for blocks
+    const foot = V(sx*(0.14 + out*0.55), 0.06, 0.03 + out*0.12), knee = V(sx*(0.13 + out*0.28), 0.48-c*0.08-out*0.1, 0.06+c*0.1), hip = V(sx*0.1, 0.9+dy, 0);
     const sh = V(sx*0.21, 1.44+dy, c*0.06);
     const stance = kit.glove ? V(sx*0.44, 1.15+dy, 0.24) : V(sx*0.27, 0.95+dy, 0.03);
     const up = V(sx*0.24, 2.12, 0.02);
@@ -968,7 +970,7 @@ const volley = {
     this.defs = [];
     for (let i=0;i<this.K.defenders;i++){ const d = makeFigure({shirt:0xd63031, shorts:0xffffff, socks:0xd63031, arms:SKIN, e:0.45}, rand(1.76,1.93)); this.g.add(d.g); this.defs.push(d); }
     this.placeDefenders();
-    this.n=0; this.total=10; this.score=0; this.goals=0; this.saves=0; this.blocks=0; this.phase='wait'; this.t=2; this.queue = ['layoff', ...['whip','whip','driven','lofted','cutback','layoff','bounce','whip','driven'].sort(()=>Math.random()-0.5)]; this.msg='Get ready…'; this.msgColor=null;
+    this.n=0; this.total=10; this.score=0; this.goals=0; this.saves=0; this.blocks=0; this.phase='wait'; this.t=2; this.queue = ['layoff', ...['whip','whip','driven','lofted','cutback','layoff','bounce','whip','driven'].sort(()=>Math.random()-0.5)]; this.msg='Corners score most · saves still count'; this.msgColor=null;
     ball.gScale = 1; ball.planes = false;
     setHud(2.6, 2.0, -3.2);
     this.draw();
@@ -995,19 +997,20 @@ const volley = {
     this.arrow.visible = show;
   },
   placeDefenders(){
-    // a loose back line: spread out, with gaps you can find
-    const xs = [];
-    for (const d of this.defs){
-      let x, tries = 0;
-      do { x = rand(-5, 5); tries++; } while (xs.some(o => Math.abs(o-x) < 1.8) && tries < 60);
-      xs.push(x);
-      d.home = V(x, 0, rand(-7.5, -4.5)); d.g.position.copy(d.home); d.g.rotation.set(0,0,0);
-      d.pose.arm = 0; d.pose.crouch = 0.15; d.state = 'idle'; d.phase = Math.random()*6;
-      d.segs.forEach(s => s.ok = false);
-    }
+    // each defender picks a shooting lane into the goal; they get into it while the ball is on its way to you
+    const n = this.defs.length, lanes = [];
+    for (let i=0;i<n;i++) lanes.push(-GOAL_HW*0.75 + (n===1 ? GOAL_HW*0.75 : i*(GOAL_HW*1.5)/(n-1)) + rand(-0.9,0.9));
+    lanes.sort(()=>Math.random()-0.5);
+    this.defs.forEach((d,i) => {
+      d.lane = lanes[i]; d.depth = rand(3.6, 6.2);                   // metres in front of you
+      const start = V(rand(-5,5), 0, rand(-8,-4.5));
+      d.home = start.clone(); d.g.position.copy(start); d.g.rotation.set(0,0,0);
+      d.pose.arm = 0; d.pose.crouch = 0.15; d.pose.legOut = 0; d.pose.legSide = 1; d.state = 'track'; d.phase = Math.random()*6;
+      d.segs.forEach(q => q.ok = false);
+    });
   },
   resetKeeper(){
-    const k = this.keeper; k.g.rotation.set(0,0,0); k.g.position.set(k.g.position.x, 0, KEEP_Z); k.pose.arm = 0; k.pose.crouch = 0.6; k.state = 'set'; k.segs.forEach(s => s.ok = false);
+    const k = this.keeper; k.g.rotation.set(0,0,0); k.g.position.set(0, 0, KEEP_Z); k.pose.arm = 0; k.pose.crouch = 0.6; k.state = 'set'; k.segs.forEach(s => s.ok = false);
   },
   draw(){
     drawHud({title:'Volley', right:`Ball ${Math.min(this.n,this.total)}/${this.total} · Keeper ${this.K.name}`, big:String(this.score), sub:`${this.goals} goals · ${this.saves} saved · ${this.blocks} blocked`, msg:this.msg, msgColor:this.msgColor,
@@ -1058,6 +1061,7 @@ const volley = {
     // announce it first: the passer calls and waves, a light beam marks him, an arrow points if he's out of view
     const where = Math.abs(src.x) < 2.5 && src.z < -1 ? 'IN FRONT' : (src.x < 0 ? 'your LEFT' : 'your RIGHT');
     this.pending = {Sp, v, spin, P, type, bounce: !!bounceAt, name, where};
+    this.P = P;   // defenders and keeper start setting up against where you'll strike it
     this.phase = 'cue'; this.t = 1.0;
     this.cueSpot.position.set(src.x, 0, src.z); this.cueSpot.visible = true;
     sfx.call(toWorld(V(src.x, 1.7, src.z)));
@@ -1068,9 +1072,15 @@ const volley = {
     this.crosser.kick = now;
     ball.reset(toWorld(Sp), dirToWorld(v)); ball.spin.copy(dirToWorld(spin)); ball.noDrag = false; ball.gScale = 1;
     this.P = P; this.dirIn = P.clone().sub(Sp).setY(0).normalize(); this.delivery = type; this.allowBounces = bounce ? 1 : (type==='cutback' ? 1 : 0);
-    this.phase='live'; this.touched=false; this.tLaunch=now; this.prev=toArena(ball.pos); this.hitBy=null; this.caught=false;
+    this.phase='live'; this.touched=false; this.tLaunch=now; this.prev=toArena(ball.pos); this.hitBy=null; this.caught=false; this.parried=false;
     this.msg = `${name} · ${Math.round(v.length()*3.6)} km/h`; this.msgColor = '#cfe0f2';
     sfx.pass(ball.pos, v.length());
+  },
+  keeperSave(tipped){
+    // you still get something for making him work
+    const pts = this.kmh >= 80 ? 25 : 15; this.saves++; this.score += pts;
+    const what = tipped ? 'SAVED! Tipped round the post' : this.caught ? 'SAVED! He’s held it' : 'SAVED!';
+    this.end(`${what}  +${pts}${pts>15 ? ' (great strike)' : ''}`, '#ffd25a');
   },
   end(msg, color='#ff9f9f'){ this.phase='wait'; this.t=2.6; this.msg=msg; this.msgColor=color; if (color==='#ff9f9f') sfx.miss(); },
   onTouch(f, zone){
@@ -1094,59 +1104,81 @@ const volley = {
     if (this.hitBy !== who){ sfx.bounce(Math.max(imp,4)); }
     if (!this.hitBy) this.tHit = now;
     if (this.hitBy !== 'keeper') this.hitBy = who;   // a keeper touch is what counts if both get a piece
-    if (who==='keeper' && imp < 9 && ball.vel.length() < 13 && (B.part==='armL'||B.part==='armR'||B.part==='torso')){ ball.vel.multiplyScalar(0.08); this.caught = true; }  // gathered in
+    if (who==='keeper' && !this.parried){ this.parried = true; const vl = dirToArena(ball.vel), bx = toArena(ball.pos).x; vl.x += (Math.sign(bx)||1)*rand(1,3); ball.vel.copy(dirToWorld(vl)); }   // palmed away from goal
+    if (who==='keeper' && imp < 11 && ball.vel.length() < 15 && (B.part==='armL'||B.part==='armR'||B.part==='torso')){ ball.vel.multiplyScalar(0.08); this.caught = true; }  // gathered in
+  },
+  shooterSpot(){ return this.touched ? toArena(ball.pos).setY(0) : (this.P ? this.P.clone().setY(0) : V(0,0,-0.6)); },
+  planDive(k, c){
+    const K = this.K, tx = c.x + k.errX, ty = clamp(c.y + k.errY, 0.1, 2.35), x0 = k.g.position.x, dx = tx - x0;
+    const plan = k.plan && k.state==='dive' ? k.plan : {x0, t0:now, z0:k.g.position.z};
+    if (Math.abs(dx) < 0.55 && ty < 2.1){              // at him: step across, get the body behind it
+      plan.x1 = tx; plan.y1 = ty > 1.5 ? 0.3 : 0; plan.roll1 = 0; plan.arm1 = clamp((ty-0.8)/1.1, 0, 1); plan.crouch1 = ty < 0.6 ? 1 : 0.3;
+    } else {                                           // dive: spring sideways and lay out along the line to the ball
+      plan.x1 = x0 + clamp(dx*0.5, -K.push, K.push); plan.y1 = clamp((ty-0.35)*0.35, 0, 0.5);
+      plan.roll1 = clamp(-Math.atan2(tx - plan.x1, Math.max(0.12, ty - plan.y1)), -1.55, 1.55);
+      plan.arm1 = 1; plan.crouch1 = 0;
+    }
+    if (!plan.dur) plan.dur = K.dive * (0.85 + 0.3*Math.min(1, Math.abs(dx)/2.5));
+    k.plan = plan;
   },
   updateKeeper(dt){
-    const k = this.keeper, K = this.K, bp = toArena(ball.pos);
+    const k = this.keeper, K = this.K;
     if (k.state === 'set'){
-      // shuffle across to narrow the angle, staying on his line
-      const want = clamp(bp.x*0.3, -1.5, 1.5);
-      k.g.position.x += clamp(want - k.g.position.x, -1.8*dt, 1.8*dt);
+      // narrow the angle: come off the line towards the shooter, on the line from the goal centre to the ball
+      const sh = this.shooterSpot(), gc = V(0,0,GOAL_Z), dir = sh.clone().sub(gc); const L = dir.length() || 1; dir.divideScalar(L);
+      const want = gc.addScaledVector(dir, Math.min(K.off, L*0.5) + 0.5);
+      want.x = clamp(want.x, -1.6, 1.6);
+      const mv = 3.2*dt;
+      k.g.position.x += clamp(want.x - k.g.position.x, -mv, mv); k.g.position.z += clamp(want.z - k.g.position.z, -mv, mv);
       k.pose.crouch = 0.6; k.pose.arm = 0;
       if (this.touched && ball.active && now - this.tTouch > K.react){
-        const c = predictCross(KEEP_Z);
-        if (c){
-          const tx = c.x + rand(-K.err, K.err), ty = clamp(c.y + rand(-K.err, K.err)*0.6, 0.1, 2.3), x0 = k.g.position.x, dx = tx - x0;
-          const plan = {x0, t0:now, roll0:0};
-          if (Math.abs(dx) < 0.5 && ty < 2.2){            // central: step across and get the body behind it
-            plan.x1 = tx; plan.y1 = ty > 1.4 ? 0.25 : 0; plan.roll1 = 0; plan.arm1 = clamp((ty-0.9)/1.1, 0, 1); plan.crouch1 = ty < 0.6 ? 1 : 0.3;
-          } else {                                         // dive: push off toward the ball, lay out along the line to it
-            plan.x1 = x0 + clamp(dx*0.4, -K.push, K.push); plan.y1 = clamp((ty-0.4)*0.3, 0, 0.42);
-            plan.roll1 = clamp(-Math.atan2(tx - plan.x1, Math.max(0.15, ty - plan.y1)), -1.5, 1.5);
-            plan.arm1 = 1; plan.crouch1 = 0;               // if it's out of reach he still goes full stretch
-          }
-          plan.dur = K.dive * (0.8 + 0.4*Math.min(1, Math.abs(dx)/1.6));
-          k.plan = plan; k.state = 'dive';
-        }
+        const c = predictCross(k.g.position.z);
+        if (c){ k.errX = rand(-K.err, K.err); k.errY = rand(-K.err, K.err)*0.6; k.plan = null; this.planDive(k, c); k.state = 'dive'; }
       }
     } else if (k.state === 'dive'){
-      const p = k.plan, e = easeOut((now - p.t0)/p.dur);
+      const p = k.plan, prog = (now - p.t0)/p.dur;
+      if (prog < K.replan){ const c = predictCross(k.g.position.z); if (c) this.planDive(k, c); }   // can still adjust early in the dive
+      const e = easeOut(prog);
       k.g.position.x = p.x0 + (p.x1 - p.x0)*e;
-      const air = Math.sin(Math.PI*clamp((now-p.t0)/(p.dur*1.6),0,1));  // up then back down
-      k.g.position.y = p.y1*air;
+      k.g.position.y = p.y1*Math.sin(Math.PI*clamp((now-p.t0)/(p.dur*1.6),0,1));
       k.g.rotation.z = p.roll1*e;
       k.pose.arm = p.arm1*e; k.pose.crouch = 0.6 + (p.crouch1-0.6)*e;
       if (now - p.t0 > p.dur*1.6) k.state = 'down';
     }
   },
   updateDefenders(dt){
+    const K = this.K, sh = this.shooterSpot();
     for (const d of this.defs){
       d.phase += dt;
-      if (d.state === 'idle'){
-        d.g.position.x = d.home.x + Math.sin(d.phase*1.3)*0.08;   // on their toes
-        if (this.touched && now - this.tTouch > this.K.react + 0.06){
-          const c = predictCross(d.home.z);
-          if (c && Math.abs(c.x - d.home.x) < 1.0){
-            d.plan = {t0:now, x0:d.g.position.x, x1:d.home.x + clamp(c.x - d.home.x, -0.5, 0.5), jump: c.y > 1.15 ? clamp(c.y-1.15, 0, 0.4) : 0, crouch: c.y < 0.5 ? 0.6 : 0.1};
-            d.state = 'block';
-          } else d.state = 'watch';
+      if (d.state === 'track'){
+        // get into your lane: on the line from the shooter to your bit of the goal
+        const tgt = V(d.lane, 0, GOAL_Z), dir = tgt.sub(sh).setY(0).normalize();
+        const want = sh.clone().addScaledVector(dir, d.depth);
+        want.x += Math.sin(d.phase*1.4)*0.1;
+        const mv = K.defSpeed*dt, cur = d.g.position;
+        const dx = want.x - cur.x, dz = want.z - cur.z, dd = Math.hypot(dx,dz);
+        if (dd > 1e-3){ const st = Math.min(mv, dd)/dd; cur.x += dx*st; cur.z += dz*st; }
+        d.g.rotation.set(0, Math.atan2(sh.x-cur.x, sh.z-cur.z), 0);    // face the shooter
+        d.pose.crouch = 0.25;
+        if (this.touched && now - this.tTouch > K.defReact){
+          const c = predictCross(cur.z);
+          if (c){
+            const off = c.x - cur.x;
+            if (Math.abs(off) < K.defReach){
+              const side = Math.sign(off) || 1, reach = clamp(Math.abs(off), 0, 0.8);
+              d.plan = {t0:now, x0:cur.x, x1:cur.x + side*Math.max(0, Math.abs(off) - (c.y < 0.7 ? 0.45 : 0.2))*0.6, jump: c.y > 1.2 ? clamp(c.y-1.15, 0, 0.45) : 0,
+                        legOut: c.y < 0.7 ? clamp(reach*1.2+0.2, 0, 1) : 0, side, crouch: c.y < 0.6 ? 0.5 : 0.1, lean: c.y >= 0.7 ? 0.35 : 0.15};
+              d.pose.legSide = side * (Math.cos(d.g.rotation.y) >= 0 ? 1 : -1);
+              d.state = 'block';
+            } else d.state = 'watch';
+          }
         }
       } else if (d.state === 'block'){
-        const p = d.plan, e = easeOut((now-p.t0)/0.32);
+        const p = d.plan, e = easeOut((now-p.t0)/0.28);
         d.g.position.x = p.x0 + (p.x1-p.x0)*e;
         d.g.position.y = p.jump*Math.sin(Math.PI*clamp((now-p.t0)/0.6,0,1));
-        d.pose.crouch = 0.15 + (p.crouch-0.15)*e;
-        d.g.rotation.z = -Math.sign(p.x1-p.x0)*0.25*e;          // lean into the block
+        d.pose.crouch = 0.25 + (p.crouch-0.25)*e; d.pose.legOut = p.legOut*e;
+        d.g.rotation.z = -p.side*p.lean*e*(Math.cos(d.g.rotation.y) >= 0 ? 1 : -1);
       }
     }
   },
@@ -1178,17 +1210,24 @@ const volley = {
         if (prev.z > GOAL_Z && cur.z <= GOAL_Z){
           const a = (prev.z-GOAL_Z)/(prev.z-cur.z), x = prev.x+(cur.x-prev.x)*a, y = prev.y+(cur.y-prev.y)*a;
           if (Math.abs(x) < GOAL_HW-R && y < GOAL_H-R){
-            let pts = 100 + this.kmh; let bonus = '';
-            for (const t of this.targets) if (Math.hypot(x-t.x, y-t.y) < 0.47){ pts += 150; t.flash = 1.5; bonus = ' · TOP BINS +150'; }
-            const how = this.hitBy==='keeper' ? ' Through the keeper!' : this.hitBy==='defender' ? ' Deflected in!' : '';
+            // every goal scores; placement is worth most, power adds a bit
+            const ax = Math.abs(x)/GOAL_HW; let place = 'Down the middle', bonus = 0;
+            if (ax > 0.68 && y > 1.6){ place = 'Top corner'; bonus = 150; }
+            else if (ax > 0.68 && y < 0.6){ place = 'Bottom corner'; bonus = 100; }
+            else if (ax > 0.68){ place = 'Inside the post'; bonus = 70; }
+            else if (ax > 0.35){ place = 'Off-centre'; bonus = 30; }
+            if (ax > 0.68) for (const t of this.targets) if (Math.sign(t.x)===Math.sign(x) && (y > 1.2) === (t.y > 1.2)) t.flash = 1.5;
+            const pts = 50 + bonus + Math.round(this.kmh/2);
+            const how = this.hitBy==='keeper' ? ' through the keeper' : this.hitBy==='defender' ? ' (deflected)' : '';
             this.score += pts; this.goals++; ball.vel.multiplyScalar(0.12);
-            this.end(`GOAL!${how} ${this.kmh} km/h +${pts}${bonus}`, '#7dffb0'); sfx.goal();
+            this.end(`GOAL! ${place}${how} · ${this.kmh} km/h  +${pts}`, '#7dffb0'); sfx.goal();
             for (const f of feet) buzz(f, 1, 200);
           } else if (Math.abs(Math.abs(x)-GOAL_HW) < R+0.05 && y < GOAL_H+0.05 || (Math.abs(y-GOAL_H) < R+0.05 && Math.abs(x) < GOAL_HW)){
-            const vl = dirToArena(ball.vel); vl.z = -vl.z*0.5; ball.vel.copy(dirToWorld(vl)); this.end('Off the woodwork!', '#ffd25a'); sfx.bounce(8);
-          } else this.end(this.hitBy==='keeper' ? 'Tipped wide by the keeper' : y >= GOAL_H ? 'Over the bar' : 'Wide');
+            const vl = dirToArena(ball.vel); vl.z = -vl.z*0.5; ball.vel.copy(dirToWorld(vl)); this.score += 10; this.end('Off the woodwork!  +10', '#ffd25a'); sfx.bounce(8);
+          } else if (this.hitBy==='keeper') this.keeperSave(true);
+          else this.end(y >= GOAL_H ? 'Over the bar' : 'Wide');
         } else if (this.hitBy && now - this.tHit > 0.9){
-          if (this.hitBy==='keeper'){ this.saves++; this.end(this.caught ? 'SAVED! He’s held it' : 'SAVED!'); }
+          if (this.hitBy==='keeper') this.keeperSave(false);
           else { this.blocks++; this.end('Blocked!'); }
           this.caught = false;
         } else if (!this.hitBy && (now-this.tTouch > 3.5 || (ball.floorHits>2 && ball.vel.length() < 3) || cur.z > 2)) this.end('Not enough on it');
